@@ -37,7 +37,7 @@ def run_macro(window_w, window_h, chat_scale):
     pyautogui.mouseDown()
     pyautogui.moveTo(0, (window_h - 1))
     pyautogui.mouseUp()
-    for i in range(chat_scale % 10 + 2):
+    for _ in range(chat_scale % 10 + 2):
         pyautogui.moveTo(1, (window_h - 2))
         pyautogui.mouseDown()
         pyautogui.moveTo(10, (window_h - 2))
