@@ -9,9 +9,57 @@ import pystray
 import ctypes  # for hiding console window on Windows
 import configparser
 import json
+import sys
+import tkinter
+from tkinter import filedialog, messagebox
+import webbrowser
+
+VERSION = '0.1.1'
+stop_event = threading.Event()
+
+def exit_app(icon, item):
+    stop_event.set()
+    icon.stop()
 
 # disable self-signed cert warnings
 requests.packages.urllib3.disable_warnings()
+
+# handler to open GitHub repo
+def open_repo(icon, item):
+    webbrowser.open('https://github.com/DaBomber60/LeagueChatHider')
+
+def load_base_path():
+    # config file path in script directory
+    cfg_file = os.path.join(os.path.dirname(__file__), 'settings.ini')
+    cp = configparser.ConfigParser()
+    # try loaded path
+    if os.path.exists(cfg_file):
+        cp.read(cfg_file)
+        path = cp.get('Paths', 'league_dir', fallback='')
+        if os.path.isdir(path) and os.path.isfile(os.path.join(path,'Config','game.cfg')) and os.path.isfile(os.path.join(path,'Config','PersistedSettings.json')):
+            return path
+    # default path
+    default = r"C:\Riot Games\League of Legends"
+    if os.path.isdir(default):
+        return default
+    # prompt user
+    tkinter.Tk().withdraw()
+    while True:
+        selected = filedialog.askdirectory(title="Select League of Legends Installation Directory")
+        if not selected:
+            retry = messagebox.askretrycancel("Error", "Directory selection required")
+            if not retry:
+                sys.exit("Directory selection cancelled by user")
+            continue
+        if os.path.isfile(os.path.join(selected,'Config','game.cfg')) and os.path.isfile(os.path.join(selected,'Config','PersistedSettings.json')):
+            cp['Paths'] = {'league_dir': selected}
+            with open(cfg_file, 'w') as f:
+                cp.write(f)
+            return selected
+        messagebox.showerror("Invalid Directory", "Selected directory does not contain required config files")
+
+# determine league installation directory
+LEAGUE_DIR = load_base_path()
 
 API_URL = "https://127.0.0.1:2999/liveclientdata/gamestats"
 
@@ -36,7 +84,9 @@ def build_menu():
     """Create the system tray menu with current state label."""
     return pystray.Menu(
         pystray.MenuItem(lambda item: state_labels.get(state, ''), None, enabled=False),
-        pystray.MenuItem('Exit', lambda icon, item: icon.stop())
+        pystray.MenuItem(f"Version: {VERSION}", None, enabled=False),
+        pystray.MenuItem('League Chat Hider on GitHub', open_repo),
+        pystray.MenuItem('Exit', exit_app)
     )
 
 def get_json():
@@ -52,7 +102,7 @@ def is_client_running():
 def update_configs():
     """Ensure NativeOffsetY and NativeOffsetX are set in both game.cfg and PersistedSettings.json."""
     # Paths to config files
-    base = r"C:\Riot Games\League of Legends\Config"
+    base = os.path.join(LEAGUE_DIR, 'Config')
     ini_path = os.path.join(base, 'game.cfg')
     json_path = os.path.join(base, 'PersistedSettings.json')
     # Update game.cfg
@@ -85,7 +135,7 @@ def update_configs():
 
 def main():
     global state
-    while True:
+    while not stop_event.is_set():
         # wait for client
         set_state('waiting_for_client')
         while not is_client_running():
@@ -106,7 +156,7 @@ def main():
         set_state('wait_for_game_start')
         # fetch window dimensions and chat scale
         cfg = configparser.ConfigParser()
-        cfg.read(os.path.join(r"C:\Riot Games\League of Legends\Config", 'game.cfg'))
+        cfg.read(os.path.join(LEAGUE_DIR, 'Config', 'game.cfg'))
         window_w = int(cfg['General'].get('Width', 0))
         window_h = int(cfg['General'].get('Height', 0))
         chat_scale = int(cfg['HUD'].get('ChatScale', 0))
@@ -138,7 +188,7 @@ if __name__ == "__main__":
     update_configs()
 
     # start main loop in background thread
-    thread = threading.Thread(target=main, daemon=True)
+    thread = threading.Thread(target=main)
     thread.start()
 
     # load tray icon
@@ -147,3 +197,5 @@ if __name__ == "__main__":
     # initial tray icon and dynamic menu
     icon = pystray.Icon('LeagueChatHider', image, 'LeagueChatHider', build_menu())
     icon.run()
+    # wait for background thread to exit cleanly
+    thread.join()
