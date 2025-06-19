@@ -13,6 +13,9 @@ import sys
 import tkinter
 from tkinter import filedialog, messagebox
 import webbrowser
+import configparser as _configparser
+
+SETTINGS_FILE = os.path.join(os.path.dirname(__file__), 'settings.ini')
 
 VERSION = '0.1.1'
 stop_event = threading.Event()
@@ -108,6 +111,12 @@ def update_configs():
     # Update game.cfg
     cp = configparser.ConfigParser()
     cp.read(ini_path)
+    # record original offsets
+    sp = _configparser.ConfigParser()
+    if os.path.exists(SETTINGS_FILE): sp.read(SETTINGS_FILE)
+    if not sp.has_section('OriginalOffsets'): sp.add_section('OriginalOffsets')
+    sp.set('OriginalOffsets','ini_NativeOffsetY', cp['Chat'].get('NativeOffsetY',''))
+    sp.set('OriginalOffsets','ini_NativeOffsetX', cp['Chat'].get('NativeOffsetX',''))
     changed = False
     if cp['Chat'].get('NativeOffsetY') != '1':
         cp['Chat']['NativeOffsetY'] = '1'
@@ -121,6 +130,18 @@ def update_configs():
     # Update PersistedSettings.json
     with open(json_path, 'r') as f:
         data = json.load(f)
+    # record original JSON offsets for Chat
+    for file in data.get('files', []):
+        if file.get('name') == 'Game.cfg':
+            for section in file.get('sections', []):
+                if section.get('name') == 'Chat':
+                    for setting in section.get('settings', []):
+                        if setting.get('name') == 'NativeOffsetY':
+                            sp.set('OriginalOffsets','json_NativeOffsetY', setting.get('value',''))
+                        if setting.get('name') == 'NativeOffsetX':
+                            sp.set('OriginalOffsets','json_NativeOffsetX', setting.get('value',''))
+    # write back saved originals
+    with open(SETTINGS_FILE,'w') as f: sp.write(f)
     for file in data.get('files', []):
         if file.get('name') == 'Game.cfg':
             for section in file.get('sections', []):
@@ -133,18 +154,55 @@ def update_configs():
     with open(json_path, 'w') as f:
         json.dump(data, f, indent=4)
 
+def restore_configs():
+    """Reapply user's original NativeOffset settings."""
+    sp = _configparser.ConfigParser()
+    if not os.path.exists(SETTINGS_FILE): return
+    sp.read(SETTINGS_FILE)
+    if not sp.has_section('OriginalOffsets'): return
+    # paths
+    base = os.path.join(LEAGUE_DIR, 'Config')
+    ini_path = os.path.join(base, 'game.cfg')
+    json_path = os.path.join(base, 'PersistedSettings.json')
+    # restore game.cfg
+    cp = configparser.ConfigParser()
+    cp.read(ini_path)
+    if sp.has_option('OriginalOffsets','ini_NativeOffsetY'):
+        cp['Chat']['NativeOffsetY'] = sp.get('OriginalOffsets','ini_NativeOffsetY')
+    if sp.has_option('OriginalOffsets','ini_NativeOffsetX'):
+        cp['Chat']['NativeOffsetX'] = sp.get('OriginalOffsets','ini_NativeOffsetX')
+    with open(ini_path,'w') as f:
+        cp.write(f)
+    # restore JSON
+    with open(json_path,'r') as f: data = json.load(f)
+    for file in data.get('files',[]):
+        if file.get('name') == 'Game.cfg':
+            for section in file.get('sections',[]):
+                if section.get('name') == 'Chat':
+                    for setting in section.get('settings',[]):
+                        if setting.get('name') == 'NativeOffsetY' and sp.has_option('OriginalOffsets','json_NativeOffsetY'):
+                            setting['value'] = sp.get('OriginalOffsets','json_NativeOffsetY')
+                        if setting.get('name') == 'NativeOffsetX' and sp.has_option('OriginalOffsets','json_NativeOffsetX'):
+                            setting['value'] = sp.get('OriginalOffsets','json_NativeOffsetX')
+    with open(json_path,'w') as f:
+        json.dump(data, f, indent=4)
+
 def main():
     global state
     while not stop_event.is_set():
         # wait for client
         set_state('waiting_for_client')
         while not is_client_running():
+            if stop_event.is_set():
+                return
             time.sleep(5)
 
         # wait for loading screen to finish
         set_state('wait_for_loading_screen')
         update_configs()
         while is_client_running():
+            if stop_event.is_set():
+                return
             status, data = get_json()
             if status == 404 and data.get('errorCode') == 'RESOURCE_NOT_FOUND':
                 break
@@ -161,6 +219,8 @@ def main():
         window_h = int(cfg['General'].get('Height', 0))
         chat_scale = int(cfg['HUD'].get('ChatScale', 0))
         while is_client_running():
+            if stop_event.is_set():
+                return
             status, data = get_json()
             if status == 200 and 'gameTime' in data and data.get('gameTime', 0) > 1:
                 run_macro(window_w, window_h, chat_scale)
@@ -172,10 +232,14 @@ def main():
         # monitor game until it ends or client closes
         set_state('monitor_game_running')
         while is_client_running():
+            if stop_event.is_set():
+                return
             status, data = get_json()
             if status != 200:
                 break
             time.sleep(30)
+        # restore user's original offsets
+        restore_configs()
 
 if __name__ == "__main__":
     # hide console window on Windows
