@@ -17,7 +17,7 @@ import configparser as _configparser
 
 SETTINGS_FILE = os.path.join(os.path.dirname(__file__), 'settings.ini')
 
-VERSION = '0.1.1'
+VERSION = 'v1.2'
 stop_event = threading.Event()
 
 def exit_app(icon, item):
